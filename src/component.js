@@ -121,13 +121,12 @@ export function getDomSibling(vnode, childIndex) {
  * @param {import('./internal').Component} component The component to rerender
  */
 function renderComponent(component) {
-	let oldVNode = component._vnode,
-		oldDom = oldVNode._dom,
-		commitQueue = [],
-		refQueue = [];
-
-	if (component._parentDom) {
-		const newVNode = assign({}, oldVNode);
+	if (component._parentDom && component._dirty) {
+		const oldVNode = component._vnode,
+			newVNode = assign({}, oldVNode),
+			commitQueue = [],
+			refQueue = [],
+			oldDom = oldVNode._dom;
 		newVNode._original = oldVNode._original + 1;
 		if (options.vnode) options.vnode(newVNode);
 
@@ -187,9 +186,6 @@ let rerenderQueue = [];
  * * [Designing APIs for Asynchrony](https://blog.izs.me/2013/08/designing-apis-for-asynchrony)
  * * [Callbacks synchronous and asynchronous](https://blog.ometer.com/2011/07/24/callbacks-synchronous-and-asynchronous/)
  */
-
-let prevDebounce;
-
 const defer =
 	typeof Promise == 'function'
 		? Promise.prototype.then.bind(Promise.resolve())
@@ -201,14 +197,12 @@ const defer =
  */
 export function enqueueRender(c) {
 	if (
-		(!c._dirty &&
-			(c._dirty = true) &&
-			rerenderQueue.push(c) &&
-			!process._rerenderCount++) ||
-		prevDebounce != options.debounceRendering
+		!c._dirty &&
+		(c._dirty = true) &&
+		rerenderQueue.push(c) &&
+		!process._rerenderCount++
 	) {
-		prevDebounce = options.debounceRendering;
-		(prevDebounce || defer)(process);
+		(options.debounceRendering || defer)(process);
 	}
 }
 
@@ -220,30 +214,36 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 
 /** Flush the render queue by rerendering all queued components */
 function process() {
-	let c,
-		l = 1;
+	try {
+		let c,
+			l = 1;
 
-	// Don't update `renderCount` yet. Keep its value non-zero to prevent unnecessary
-	// process() calls from getting scheduled while `queue` is still being consumed.
-	while (rerenderQueue.length) {
-		// Keep the rerender queue sorted by (depth, insertion order). The queue
-		// will initially be sorted on the first iteration only if it has more than 1 item.
-		//
-		// New items can be added to the queue e.g. when rerendering a provider, so we want to
-		// keep the order from top to bottom with those new items so we can handle them in a
-		// single pass
-		if (rerenderQueue.length > l) {
-			rerenderQueue.sort(depthSort);
-		}
+		// Don't update `renderCount` yet. Keep its value non-zero to prevent unnecessary
+		// process() calls from getting scheduled while `queue` is still being consumed.
+		while (rerenderQueue.length) {
+			// Keep the rerender queue sorted by (depth, insertion order). The queue
+			// will initially be sorted on the first iteration only if it has more than 1 item.
+			//
+			// New items can be added to the queue e.g. when rerendering a provider, so we want to
+			// keep the order from top to bottom with those new items so we can handle them in a
+			// single pass
+			if (rerenderQueue.length > l) {
+				rerenderQueue.sort(depthSort);
+			}
 
-		c = rerenderQueue.shift();
-		l = rerenderQueue.length;
+			c = rerenderQueue.shift();
+			l = rerenderQueue.length;
 
-		if (c._dirty) {
 			renderComponent(c);
 		}
+	} finally {
+		process._rerenderCount = 0;
 	}
-	process._rerenderCount = 0;
 }
 
 process._rerenderCount = 0;
+
+// Expose the render queue flush function via options so that
+// test-utils can synchronously drain pending renders (e.g. in act())
+// without relying on options.debounceRendering being re-invoked.
+options.__test__processQueue = process;

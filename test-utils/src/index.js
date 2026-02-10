@@ -7,7 +7,7 @@ import { options } from 'preact';
 export function setupRerender() {
 	options.__test__previousDebounce = options.debounceRendering;
 	options.debounceRendering = cb => (options.__test__drainQueue = cb);
-	return () => options.__test__drainQueue && options.__test__drainQueue();
+	return () => (options.__test__drainQueue || options.__test__processQueue)();
 }
 
 const isThenable = value => value != null && typeof value.then == 'function';
@@ -57,7 +57,8 @@ export function act(cb) {
 	const rerender = setupRerender();
 
 	/** @type {() => void} */
-	let flushes = [], toFlush;
+	let flushes = [],
+		toFlush;
 
 	// Override requestAnimationFrame so we can flush pending hooks.
 	options.requestAnimationFrame = fc => flushes.push(fc);
